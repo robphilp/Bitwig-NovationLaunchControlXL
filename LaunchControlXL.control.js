@@ -19,11 +19,22 @@ function blinkTimer() {
     host.scheduleTask(blinkTimer, blinkInterval);
 }
 
+var alert_tag;
+
+function alert(tag, message) {
+    if (tag != alert_tag) {
+        host.showPopupNotification(message);
+        alert_tag = tag;
+    }
+}
+
 // We have a single row (1 scene) of 8 tracks represented by our 8 buttons on LaunchControl XL
 var NUM_TRACKS = 8;
 var NUM_SCENES = 1;
 
 var USER_MODE_1 = 176;
+
+var shift = false;
 
 var OFF = 0;
 var ON = 127;
@@ -44,7 +55,11 @@ var GREEN = 28;
 var TRACK_FOCUS_BUTTONS = [41, 42, 43, 44, 57, 58, 59, 60];
 var TRACK_CONTROL_BUTTONS = [73, 74, 75, 76, 89, 90, 91, 92];
 
+// Rotary values for midi in/out
 var VOLUME_FADERS = [77, 78, 79, 80, 81, 82, 83, 84];
+var SEND_1 = [13, 14, 15, 16, 17, 18, 19, 20];
+var SEND_2 = [29, 30, 31, 32, 33, 34, 35, 36];
+var PAN = [49, 50, 51, 52, 53, 54, 55, 56];
 
 /**
  * These represent one "row" of clips in the session view.
@@ -56,14 +71,16 @@ var clipIsPlaying = initArray(0, NUM_TRACKS * NUM_SCENES);
 var clipIsQueuedForPlayback = initArray(0, NUM_TRACKS * NUM_SCENES);
 var clipIsQueuedForStop = initArray(0, NUM_TRACKS * NUM_SCENES);
 
-// soft takeover store for volume faders
+// soft takeover store for faders/knobs
 var volume = initArray(0, NUM_TRACKS * NUM_SCENES);
+var send_1 = initArray(0, NUM_TRACKS * NUM_SCENES);
+var send_2 = initArray(0, NUM_TRACKS * NUM_SCENES);
+var pan = initArray(0, NUM_TRACKS * NUM_SCENES);
 for(i=0; i<NUM_TRACKS; i++) {
-    volume[i] = {
-        changes: false,
-        jumps: false,
-        value: 0
-    }
+    volume[i] = { changes: false, jumps: false, value: 0 };
+    send_1[i] = { changes: false, jumps: false, value: 0 };
+    send_2[i] = { changes: false, jumps: false, value: 0 };
+    pan[i] = { changes: false, jumps: false, value: 0 };
 }
 
 // A function to create an indexed function for the Observers
@@ -103,8 +120,11 @@ function init() {
         trackBank.getChannel(t).clipLauncherSlotBank().addIsPlayingObserver(getValueObserverFunc(t, clipIsPlaying));
         trackBank.getChannel(t).clipLauncherSlotBank().addIsPlaybackQueuedObserver(getValueObserverFunc(t, clipIsQueuedForPlayback));
 
-        // track volume observers
-        trackBank.getChannel(t).getVolume().modulatedValue().addValueObserver(128, getSoftTakeoverObserverFunc(t, volume))
+        // track volume/pan/send observers
+        trackBank.getChannel(t).getVolume().modulatedValue().addValueObserver(128, getSoftTakeoverObserverFunc(t, volume));
+        trackBank.getChannel(t).sendBank().getItemAt(0).modulatedValue().addValueObserver(128, getSoftTakeoverObserverFunc(t, send_1))
+        trackBank.getChannel(t).sendBank().getItemAt(1).modulatedValue().addValueObserver(128, getSoftTakeoverObserverFunc(t, send_2))
+        trackBank.getChannel(t).getPan().modulatedValue().addValueObserver(128, getSoftTakeoverObserverFunc(t, pan));
     }
 
     // Callback for receiving MIDI input from our controller
@@ -131,6 +151,11 @@ function onMidi(status, data1, data2) {
     // Debugging call - dumps MIDI data into console
     // printMidi(status, data1, data2);
 
+    if (data1 == 108) {
+        shift = (data2 == 127);
+        host.getMidiOutPort(0).sendMidi(status, data1, data2);
+    }
+
     // Branches to other functions depending on input
     if (inArray(BUTTONS_DIRECTIONAL, data1)) {
        handleSessionControl(status, data1, data2);
@@ -144,18 +169,29 @@ function onMidi(status, data1, data2) {
     if (inArray(VOLUME_FADERS, data1)) {
         handleVolumeFader(status, data1, data2);
     }
+    if (inArray(SEND_1, data1)) {
+        handleSendA(status, data1, data2);
+    }
+    if (inArray(SEND_2, data1)) {
+        handleSendB(status, data1, data2);
+    }
+    if (inArray(PAN, data1)) {
+        handlePan(status, data1, data2);
+    }
 }
 
 // Handles session movement/launch if the directional buttons are pressed
 function handleSessionControl(status, data1, data2) {
-    if (data1 == BUTTON_RIGHT && data2 == ON) {
-        trackBank.sceneBank().getScene(0).launch();
-    }
-    if (data1 == BUTTON_DOWN && data2 == ON) {
-        trackBank.sceneBank().scrollPageForwards();
-    }
-    if (data1 == BUTTON_UP && data2 == ON) {
-        trackBank.sceneBank().scrollPageBackwards();
+    if (shift) {
+        if (data1 == BUTTON_RIGHT && data2 == ON) {
+            trackBank.sceneBank().getScene(0).launch();
+        }
+        if (data1 == BUTTON_DOWN && data2 == ON) {
+            trackBank.sceneBank().scrollPageForwards();
+        }
+        if (data1 == BUTTON_UP && data2 == ON) {
+            trackBank.sceneBank().scrollPageBackwards();
+        }
     }
 }
 
@@ -179,6 +215,46 @@ function handleVolumeFader(status, data1, data2) {
             volume[track].changes = true;
             volume[track].jumps = false;
             trackBank.getChannel(track).getVolume().value().set(data2, 128);
+        }
+    }
+}
+
+function handleSendA(status, data1, data2) {
+    // println('got to send handler');
+    track = SEND_1.indexOf(data1);
+    if (track !== -1) {
+        var diff = data2 - send_1[track].value;
+        if (!send_1[track].jumps || (Math.abs(diff) < 2)) {
+            send_1[track].changes = true;
+            send_1[track].jumps = false;
+            trackBank.getChannel(track).sendBank().getItemAt(0).value().set(data2, 128);
+        }
+    }
+}
+
+function handleSendB(status, data1, data2) {
+    // println('got to send handler');
+
+    track = SEND_2.indexOf(data1);
+    if (track !== -1) {
+        var diff = data2 - send_2[track].value;
+        if (!send_2[track].jumps || (Math.abs(diff) < 2)) {
+            send_2[track].changes = true;
+            send_2[track].jumps = false;
+            trackBank.getChannel(track).sendBank().getItemAt(1).value().set(data2, 128);
+        }
+    }
+}
+
+function handlePan(status, data1, data2) {
+    // println('got to send handler');
+    track = PAN.indexOf(data1);
+    if (track !== -1) {
+        var diff = data2 - pan[track].value;
+        if (!pan[track].jumps || (Math.abs(diff) < 2)) {
+            pan[track].changes = true;
+            pan[track].jumps = false;
+            trackBank.getChannel(track).getPan().value().set(data2, 128);
         }
     }
 }
