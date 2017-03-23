@@ -160,23 +160,18 @@ function onMidi(status, data1, data2) {
     if (inArray(BUTTONS_DIRECTIONAL, data1)) {
        handleSessionControl(status, data1, data2);
     }
+
     if (inArray(TRACK_FOCUS_BUTTONS, data1)) {
         handleClipLaunch(status, data1, data2)
     }
+
     if (inArray(TRACK_CONTROL_BUTTONS, data1)) {
         handleClipStop(status, data1, data2)
     }
-    if (inArray(VOLUME_FADERS, data1)) {
-        handleVolumeFader(status, data1, data2);
-    }
-    if (inArray(SEND_1, data1)) {
-        handleSendA(status, data1, data2);
-    }
-    if (inArray(SEND_2, data1)) {
-        handleSendB(status, data1, data2);
-    }
-    if (inArray(PAN, data1)) {
-        handlePan(status, data1, data2);
+
+    softTakeoverControls = VOLUME_FADERS.concat(SEND_1, SEND_2, PAN);
+    if (inArray(softTakeoverControls, data1)) {
+        handleSoftTakeoverControls(status, data1, data2);
     }
 }
 
@@ -207,54 +202,38 @@ function handleClipStop(status, data1, data2) {
     if (track !== -1) trackBank.getChannel(track).clipLauncherSlotBank().stop();
 }
 
-function handleVolumeFader(status, data1, data2) {
-    track = VOLUME_FADERS.indexOf(data1);
-    if (track !== -1) {
-        var diff = data2 - volume[track].value;
-        if (!volume[track].jumps || (Math.abs(diff) < 2)) {
-            volume[track].changes = true;
-            volume[track].jumps = false;
-            trackBank.getChannel(track).getVolume().value().set(data2, 128);
-        }
+function handleSoftTakeoverControls(status, data1, data2) {
+    if (inArray(VOLUME_FADERS, data1)) {
+        midiToCheck = VOLUME_FADERS;
+        targetStore = volume;
+        trackIndex = midiToCheck.indexOf(data1);
+        targetValue = trackBank.getChannel(trackIndex).getVolume().value()
     }
-}
-
-function handleSendA(status, data1, data2) {
-    // println('got to send handler');
-    track = SEND_1.indexOf(data1);
-    if (track !== -1) {
-        var diff = data2 - send_1[track].value;
-        if (!send_1[track].jumps || (Math.abs(diff) < 2)) {
-            send_1[track].changes = true;
-            send_1[track].jumps = false;
-            trackBank.getChannel(track).sendBank().getItemAt(0).value().set(data2, 128);
-        }
+    if (inArray(SEND_1, data1)) {
+        midiToCheck = SEND_1;
+        targetStore = send_1;
+        trackIndex = midiToCheck.indexOf(data1);
+        targetValue = trackBank.getChannel(trackIndex).sendBank().getItemAt(0).value()
     }
-}
-
-function handleSendB(status, data1, data2) {
-    // println('got to send handler');
-
-    track = SEND_2.indexOf(data1);
-    if (track !== -1) {
-        var diff = data2 - send_2[track].value;
-        if (!send_2[track].jumps || (Math.abs(diff) < 2)) {
-            send_2[track].changes = true;
-            send_2[track].jumps = false;
-            trackBank.getChannel(track).sendBank().getItemAt(1).value().set(data2, 128);
-        }
+    if (inArray(SEND_2, data1)) {
+        midiToCheck = SEND_2;
+        targetStore = send_2;
+        trackIndex = midiToCheck.indexOf(data1);
+        targetValue = trackBank.getChannel(trackIndex).sendBank().getItemAt(1).value()
     }
-}
+    if (inArray(PAN, data1)) {
+        midiToCheck = PAN;
+        targetStore = pan;
+        trackIndex = midiToCheck.indexOf(data1);
+        targetValue = trackBank.getChannel(trackIndex).getPan().value()
+    }
 
-function handlePan(status, data1, data2) {
-    // println('got to send handler');
-    track = PAN.indexOf(data1);
-    if (track !== -1) {
-        var diff = data2 - pan[track].value;
-        if (!pan[track].jumps || (Math.abs(diff) < 2)) {
-            pan[track].changes = true;
-            pan[track].jumps = false;
-            trackBank.getChannel(track).getPan().value().set(data2, 128);
+    if (trackIndex !== -1) {
+        var diff = data2 - targetStore[trackIndex].value;
+        if (!targetStore[trackIndex].jumps || (Math.abs(diff) < 2)) {
+            targetStore[trackIndex].changes = true;
+            targetStore[trackIndex].jumps = false;
+            targetValue.set(data2, 128);
         }
     }
 }
